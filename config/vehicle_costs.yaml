@@ -1,0 +1,6 @@
+fixed_cost_per_day: 500.0
+cost_per_km: 1.1
+cost_per_hour_regular: 1.1
+cost_per_hour_overtime: 1.3
+regular_hours: 8
+speed_kmh: 10.0

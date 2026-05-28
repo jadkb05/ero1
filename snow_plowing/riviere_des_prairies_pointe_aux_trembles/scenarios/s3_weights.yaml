@@ -1,0 +1,8 @@
+nom: S3 - Budget minimal
+description: Minimiser le cout total, priorite distance
+poids:
+  primary: 0.5
+  secondary: 0.8
+  tertiary: 1.0
+  residential: 1.5
+  unclassified: 2.0

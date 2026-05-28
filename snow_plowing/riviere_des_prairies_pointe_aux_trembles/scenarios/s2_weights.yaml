@@ -1,0 +1,8 @@
+nom: S2 - Equite territoriale
+description: Traitement uniforme de toutes les rues
+poids:
+  primary: 1.0
+  secondary: 1.0
+  tertiary: 1.0
+  residential: 1.0
+  unclassified: 1.0

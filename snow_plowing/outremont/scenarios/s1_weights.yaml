@@ -1,0 +1,8 @@
+nom: S1 - Mobilite et services
+description: Priorite aux axes principaux, hopitaux, transport
+poids:
+  primary: 1.0
+  secondary: 1.5
+  tertiary: 2.0
+  residential: 3.0
+  unclassified: 3.0

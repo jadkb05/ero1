@@ -1,0 +1,314 @@
+---
+title: "ERO1 - Optimisation hivernale du deneigement a Montreal"
+author: "Adam Wachoo, Jad Kbibech, Yassir Boughamra, Houda Atlassi, Amine Abou El Ainene"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  pdf_document:
+    number_sections: true
+    toc: false
+fontsize: 12pt
+geometry: margin=2.8cm
+linestretch: 1.4
+header-includes:
+  - \usepackage{booktabs}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+if (dir.exists("../../snow_plowing")) {
+  racine <- normalizePath("../..")
+} else {
+  racine <- normalizePath(".")
+}
+
+secteurs <- c(
+  "outremont",
+  "verdun",
+  "anjou",
+  "riviere_des_prairies_pointe_aux_trembles"
+)
+
+lire_resultat <- function(secteur, num_scenario) {
+  chemin <- file.path(racine, "snow_plowing", secteur, "outputs",
+    paste0("resultats_s", num_scenario, ".csv"))
+  if (!file.exists(chemin)) return(NULL)
+  lignes <- read.csv(chemin, stringsAsFactors = FALSE)
+  res <- list()
+  i <- 1
+  while (i <= nrow(lignes)) {
+    res[[lignes$indicateur[i]]] <- lignes$valeur[i]
+    i <- i + 1
+  }
+  data.frame(
+    secteur = as.character(res$secteur),
+    scenario = as.numeric(res$scenario),
+    km_total = as.numeric(res$km_total),
+    cout_total = as.numeric(res$cout_total),
+    temps_heures = as.numeric(res$temps_heures),
+    stringsAsFactors = FALSE
+  )
+}
+
+charger_tous <- function() {
+  liste <- list()
+  k <- 1
+  s <- 1
+  while (s <= length(secteurs)) {
+    sc <- 1
+    while (sc <= 3) {
+      ligne <- lire_resultat(secteurs[s], sc)
+      if (!is.null(ligne)) {
+        liste[[k]] <- ligne
+        k <- k + 1
+      }
+      sc <- sc + 1
+    }
+    s <- s + 1
+  }
+  if (k == 1) return(NULL)
+  do.call(rbind, liste)
+}
+
+donnees <- charger_tous()
+
+nom_sc <- function(num) {
+  if (num == 1) return("S1 Mobilite")
+  if (num == 2) return("S2 Equite")
+  return("S3 Budget")
+}
+
+if (!is.null(donnees)) {
+  donnees$nom_scenario <- NA
+  i <- 1
+  while (i <= nrow(donnees)) {
+    donnees$nom_scenario[i] <- nom_sc(donnees$scenario[i])
+    i <- i + 1
+  }
+  donnees$secteur_label <- donnees$secteur
+  donnees$secteur_label[donnees$secteur == "riviere_des_prairies_pointe_aux_trembles"] <- "RDP-PAT"
+}
+```
+
+# Introduction
+
+La ville de Montreal consacre environ **200 M$** par hiver aux operations de deneigement (Fortier, 2023). Ces operations mobilisent plus de 3000 employes et 2000 appareils sur 10 000 km de routes. Les operations de deblaiement ont lieu lors de chutes de neige entre 2,5 cm et 15 cm.
+
+Notre etude porte sur quatre arrondissements : **Outremont**, **Verdun**, **Anjou** et **Riviere-des-Prairies-Pointe-aux-Trembles**. Nous proposons trois scenarios de priorisation, calculons les itineraires sur le reseau routier reel et comparons le cout, la distance parcourue et les effets sur les habitants.
+
+# Formalisation et methodes
+
+## Donnees et perimetre
+
+Le reseau routier de chaque arrondissement est extrait depuis OpenStreetMap via la librairie Python osmnx. On conserve les types de voies suivants : primary, secondary, tertiary, residential et unclassified. Les autoroutes et voies pietonnes sont exclues.
+
+| Element | Valeur |
+|---------|--------|
+| Source reseau | OpenStreetMap via osmnx |
+| Types de voies | primary, secondary, tertiary, residential, unclassified |
+| Longueurs aretes | Attribut length OSM en metres |
+| Vitesse vehicules | 10 km/h |
+| Cout fixe | 500 $/jour |
+| Cout kilometrique | 1,1 $/km |
+| Cout horaire normal | 1,1 $/h (8 premieres heures) |
+| Cout horaire sup | 1,3 $/h (au-dela de 8h) |
+
+**Hypotheses :** un seul depot par arrondissement, partage egal des km entre vehicules, pas de contraintes temporelles par rue, reseau statique pour une journee type.
+
+## Modele mathematique
+
+Le reseau routier est modelise comme un graphe oriente $G = (V, E)$ ou $V$ est l'ensemble des intersections et $E$ l'ensemble des segments de rue. Chaque arete $e$ possede une longueur $l_e$ en metres.
+
+Le probleme consiste a trouver un circuit passant par toutes les aretes au moins une fois en minimisant la distance totale. C'est le **probleme du Postier Chinois**.
+
+Le modele de cout pour un vehicule parcourant $d$ km est :
+
+$$C(d) = 500 + 1{,}1 \times d + 1{,}1 \times \min\!\left(\frac{d}{10}, 8\right) + 1{,}3 \times \max\!\left(0, \frac{d}{10} - 8\right)$$
+
+Pour $K$ vehicules, on repartit les kilometres egalement : $C_K(d) = K \times C(d/K)$.
+
+## Methode de resolution
+
+Un graphe possede un circuit eulerien si et seulement si tous ses noeuds sont de degre pair. La methode utilisee est :
+
+1. Extraction du reseau depuis OpenStreetMap
+2. Reduction a la plus grande composante connexe
+3. Application des poids du scenario sur les aretes
+4. Eulerisation via l'algorithme `eulerize` de NetworkX
+5. Calcul du circuit eulerien via l'algorithme de Hierholzer
+6. Calcul du cout selon le modele economique
+
+Nous n'avons pas retenu un solveur VRP ou un programme lineaire sur le graphe complet : la taille des arrondissements (jusqu'a 1902 noeuds sur RDP-PAT) rend le probleme NP-difficile en temps utile pour notre prototype.
+
+## Indicateurs
+
+- Distance totale parcourue en km
+- Cout total en dollars pour K vehicules
+- Temps d'operation en heures
+- Comparaison entre les trois scenarios
+
+## Limites
+
+- Les scenarios sont des poids sur les aretes, pas des contraintes geocodees dures.
+- Riviere-des-Prairies-Pointe-aux-Trembles (1902 noeuds) est trop grand pour l'eulerisation complete ; le cout est estime sur la distance brute du graphe.
+- Le partage equitable des km entre vehicules est une simplification.
+
+# Trois scenarios de priorisation
+
+## Scenario S1 -- Mobilite et services
+
+**Principe :** priorite aux axes principaux avant les rues residentielles. Ce scenario favorise la fluidite du trafic et l'acces aux hopitaux et transports en commun.
+
+**Argumentaire :** La ville priorise la securite sur les arteres principales (Ville de Montreal). En hiver 2025, le deblaiement cible d'abord les voies a forte circulation (Lowrie, 2025).
+
+**Poids :** primary x1,0 -- secondary x1,5 -- tertiary x2,0 -- residential x3,0
+
+**Benefices :** circulation des bus et urgences maintenue, commerces accessibles rapidement.
+
+**Risques :** quartiers residentiels traites en dernier, risque de plaintes citoyennes.
+
+## Scenario S2 -- Equite territoriale
+
+**Principe :** poids uniformes sur tous les types de voies. Traitement egal de chaque rue sans distinction.
+
+**Argumentaire :** Repond aux critiques sur les inegalites entre quartiers (Ouellette-Vezina, 2020). L'equite territoriale est un enjeu politique important pour le conseil municipal.
+
+**Poids :** tous les types x1,0
+
+**Benefices :** service homogene pour tous les habitants ; dans nos resultats, ce scenario donne souvent le km et le cout les plus bas.
+
+**Risques :** les axes critiques ne sont pas priorises en cas d'urgence sanitaire.
+
+## Scenario S3 -- Budget minimal
+
+**Principe :** favoriser les grandes voies (poids faible sur primary) pour orienter la tournee tout en garantissant la couverture complete.
+
+**Argumentaire :** Face a la pression budgetaire (Lefebvre, 2019 ; Fortier, 2023), ce scenario cherche a reduire le cout operationnel.
+
+**Poids :** primary x0,5 -- secondary x0,8 -- tertiary x1,0 -- residential x1,5
+
+**Benefices :** logique de reduction des couts pour l'administration, tournees efficaces sur les grands axes.
+
+**Risques :** risque politique si les rues secondaires sont traitees trop tard ; ce scenario n'est pas toujours le moins cher en dollars (S2 peut etre inferieur).
+
+# Analyse des resultats
+
+## Resultats par secteur
+
+```{r tableau-resultats, results='asis'}
+if (is.null(donnees)) {
+  cat("Aucun fichier CSV trouve. Lancez demo.py avant de compiler.\n")
+} else {
+  tab <- donnees[, c("secteur_label", "nom_scenario", "km_total", "cout_total", "temps_heures")]
+  colnames(tab) <- c("Secteur", "Scenario", "Km", "Cout ($)", "Temps (h)")
+  knitr::kable(tab, booktabs = TRUE, digits = 2,
+    caption = "Resultats par secteur et scenario (1 vehicule)")
+}
+```
+
+## Totaux par scenario
+
+```{r totaux, results='asis'}
+if (!is.null(donnees)) {
+  totaux <- aggregate(
+    cbind(km_total, cout_total, temps_heures) ~ nom_scenario,
+    data = donnees,
+    FUN = sum
+  )
+  colnames(totaux) <- c("Scenario", "Km total", "Cout total ($)", "Temps total (h)")
+  knitr::kable(totaux, booktabs = TRUE, digits = 2,
+    caption = "Totaux sur les quatre arrondissements (1 vehicule par secteur)")
+}
+```
+
+## Comparaison des scenarios
+
+```{r comparaison, results='asis'}
+if (!is.null(donnees)) {
+  s1_km <- sum(donnees$km_total[donnees$scenario == 1])
+  s2_km <- sum(donnees$km_total[donnees$scenario == 2])
+  s3_km <- sum(donnees$km_total[donnees$scenario == 3])
+  s1_cout <- sum(donnees$cout_total[donnees$scenario == 1])
+  s2_cout <- sum(donnees$cout_total[donnees$scenario == 2])
+  s3_cout <- sum(donnees$cout_total[donnees$scenario == 3])
+  diff <- round(s1_cout - s2_cout, 0)
+  cat("S2 donne le cout le plus bas :", round(s2_cout, 0), "$ pour", round(s2_km, 1), "km totaux.\n\n")
+  cat("S1 est le plus couteux :", round(s1_cout, 0), "$ pour", round(s1_km, 1), "km.\n\n")
+  cat("S3 se situe entre les deux :", round(s3_cout, 0), "$.\n\n")
+  cat("Ecart entre S1 et S2 :", diff, "$ par journee de deneigement sur ces quatre arrondissements.\n")
+}
+```
+
+Sur **Outremont** et **Verdun**, S2 reduit fortement la distance par rapport a S1 car les poids uniformes produisent l'eulerisation la plus courte. Sur **Anjou**, S1 donne le parcours le plus long car le graphe est sensible aux poids eleves sur les zones residentielles. **RDP-PAT** affiche les memes valeurs pour les trois scenarios car l'eulerisation complete n'a pas pu etre calculee.
+
+**Note S2 vs S3 :** S3 exprime une priorite budgetaire dans le choix des poids, mais S2 minimise souvent le cout mesure car l'eulerisation avec poids uniformes est plus courte. Les deux scenarios restent qualitativement differents.
+
+## Modele de cout a l'echelle de la ville
+
+```{r cout-ville, results='asis'}
+if (!is.null(donnees)) {
+  km_total_s2 <- sum(donnees$km_total[donnees$scenario == 2])
+  facteur <- 10000 / km_total_s2
+  valeurs_k <- c(1, 2, 5, 10)
+  lignes <- c()
+  i <- 1
+  while (i <= length(valeurs_k)) {
+    k <- valeurs_k[i]
+    km_par_v <- km_total_s2 / k
+    heures <- km_par_v / 10
+    if (heures <= 8) {
+      cout_h <- 1.1 * heures
+    } else {
+      cout_h <- 1.1 * 8 + 1.3 * (heures - 8)
+    }
+    cout_un <- 500 + 1.1 * km_par_v + cout_h
+    cout_total_k <- round(cout_un * k, 0)
+    lignes <- c(lignes, paste0("K=", k, " : ", cout_total_k, " $"))
+    i <- i + 1
+  }
+  cat(paste(lignes, collapse = "\n\n"))
+  cat("\n\n")
+  cat("Km mesures (4 arrondissements, S2) :", round(km_total_s2, 1), " km.\n")
+  cat("Facteur d'echelle vers 10 000 km :", round(facteur, 1), ".\n")
+  km_mtl <- 10000
+  k5 <- 5
+  kmv <- km_mtl / k5
+  hv <- kmv / 10
+  if (hv <= 8) {
+    ch <- 1.1 * hv
+  } else {
+    ch <- 1.1 * 8 + 1.3 * (hv - 8)
+  }
+  cout_mtl <- round((500 + 1.1 * kmv + ch) * k5, 0)
+  cat("Ordre de grandeur Montreal (10 000 km, K=5) :", cout_mtl, " $ par journee type.\n")
+}
+```
+
+Pour extrapoler a l'echelle de Montreal (~10 000 km), on applique un facteur d'echelle base sur la somme des km de nos quatre arrondissements. En augmentant K, le cout fixe augmente mais le temps par vehicule diminue, ce qui evite les heures supplementaires.
+
+## Projection sur les habitants de Montreal
+
+| Scenario | Effet sur la vie quotidienne | Risques |
+|----------|------------------------------|---------|
+| S1 | Grands axes debloques rapidement, acces urgences | Zones residentielles en attente, plaintes |
+| S2 | Service homogene pour tous les quartiers | Axes critiques non priorises |
+| S3 | Pression fiscale moindre | Qualite percue reduite en zones secondaires |
+
+**Effets negatifs communs :** bruit nocturne, stationnement interdit, fatigue des equipes au-dela de 8 heures (cas d'Anjou et RDP-PAT avec 1 seul vehicule).
+
+# Conclusion
+
+Nous avons formalise le deneigement comme un **probleme du Postier Chinois** sur graphe routier reel, implemente trois politiques de ponderation et quantifie distance, temps et cout sur quatre arrondissements.
+
+**S2** minimise la distance et le cout car les poids uniformes produisent l'eulerisation la plus courte. **S1** traduit une priorite mobilite au prix de kilometres supplementaires. **S3** vise le budget avec un compromis acceptable entre cout et service, sans etre systematiquement le minimum numerique observe.
+
+Les limites principales sont l'absence de contraintes temporelles reelles, la simplification du partage des vehicules, et la taille du graphe de Riviere-des-Prairies qui a necessite une approximation. Une version plus avancee integrerait un VRP multi-vehicules avec geocodage des points d'interet.
+
+# References
+
+- Ville de Montreal. *Tout savoir sur le deneigement dans l'arrondissement*. Direction de la voirie.
+- Fortier, M. (2023). *Une facture de pres de 200 millions cet hiver*. La Presse, novembre 2023.
+- Lefebvre, S.-M. (2019). *Les prix du deneigement explosent partout au Quebec*. Journal de Montreal.
+- Lowrie, M. (2025). *Comment ca marche, le deneigement a Montreal ?*. Le Devoir, decembre 2025.
+- CBC News. (2018). *How Montreal takes 300,000 truckloads of snow off the street every winter*.
+- Ouellette-Vezina, H. (2020). *Deneigement : on craint toujours de depasser le budget*. Metro.

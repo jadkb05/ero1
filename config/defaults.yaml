@@ -1,0 +1,8 @@
+highway_types:
+  - primary
+  - secondary
+  - tertiary
+  - residential
+  - unclassified
+cache_dir: src/data/cache
+output_dir: snow_plowing
