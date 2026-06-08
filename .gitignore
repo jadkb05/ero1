@@ -7,15 +7,19 @@ __pycache__/
 dist/
 build/
 
-# Données volumineuses / cache OSM
-src/data/cache/
-*.osm.pbf
-*.geojson.tmp
+# cache OSM (regenerable avec download_osm.py)
+src/data/cache/*.pkl
+src/data/cache/*.graphml
+cache/
 
-# Sorties générées (optionnel : versionner les résultats finaux)
-# snow_plowing/*/outputs/
+# LaTeX / R build
+docs/rapport/*.log
+docs/rapport/*.aux
+docs/rapport/*.toc
+docs/rapport/*.out
 
-# Rapport compilé (sources dans docs/)
-# rapport.pdf
+# fichiers systeme / installateurs
+*.deb
+*.deb.*
 
 .env
